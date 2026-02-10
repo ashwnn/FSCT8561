@@ -1,212 +1,108 @@
-from scapy.all import sniff, Ether, IP, TCP, UDP, Raw
-import datetime
-import re
-import os
+#!/usr/bin/env python3
 
-# Configuration
-PACKETS_PER_CAPTURE = 50
-INTERFACE = None  # None = use default interface
+from scapy.all import sniff, Ether, IP, TCP, UDP, Raw  # type: ignore
 
-# Output files
-REPORT_FILE = "capture_report.txt"
+COUNT = 50
 
-# Capture filters: (BPF_filter, label)
-CAPTURES = [
-    ("tcp", "TCP"),
-    ("tcp port 80", "HTTP"),
-    ("udp port 53", "DNS"),
+SENSITIVE_KEYWORDS = [
+    "username",
+    "user=",
+    "password",
+    "pass=",
+    "passwd",
+    "pwd=",
+    "login",
+    "authorization:",
+    "token",
+    "apikey",
+    "api_key",
 ]
 
-# Patterns for detecting sensitive data
-SENSITIVE_PATTERNS = [
-    re.compile(r"(user(name)?|login)\s*=\s*[^&\s]+", re.I),
-    re.compile(r"(pass(word)?|pwd)\s*=\s*[^&\s]+", re.I),
-    re.compile(r"authorization:\s*basic\s+[a-z0-9+/=]+", re.I),
+HTTP_METADATA_MARKERS = [
+    "cookie:",
+    "set-cookie:",
+    "user-agent:",
+    "server:",
 ]
 
-# HTTP headers that may leak metadata
-HTTP_METADATA_HEADERS = {
-    "user-agent", "server", "cookie", "set-cookie", "referer", "authorization"
-}
+current_label = "CAPTURE"
+tcp_count = 0
+udp_count = 0
 
-def format_time(timestamp):
+# decode to utf-8 catching errors
+def safe_decode(b: bytes) -> str:
     try:
-        return datetime.datetime.fromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return "unknown-time"
-
-def get_payload(packet):
-    if Raw not in packet:
-        return ""
-    try:
-        return bytes(packet[Raw].load).decode("utf-8", errors="ignore")
+        return b.decode("utf-8", errors="ignore")
     except Exception:
         return ""
 
-def is_http(packet):
-    if TCP not in packet:
-        return False
-    if packet[TCP].sport != 80 and packet[TCP].dport != 80:
-        return False
-    
-    payload = get_payload(packet)
-    if not payload:
-        return False
-    
-    first_line = payload.splitlines()[0].strip() if payload.splitlines() else ""
-    http_methods = ("GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ")
-    return first_line.startswith(http_methods) or "HTTP/" in first_line
+def packet_callback(pkt) -> None:
+    global tcp_count, udp_count
 
-def find_sensitive_data(text):
-    matches = []
-    for pattern in SENSITIVE_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            matches.append(match.group(0))
-    return matches
+    ts = float(getattr(pkt, "time", 0.0))
+    length = len(pkt)
 
-def process_packet(packet, stats):
-    timestamp = format_time(getattr(packet, "time", 0))
-    
-    # Extract MAC addresses
-    mac_src = mac_dst = "-"
-    if Ether in packet:
-        mac_src = packet[Ether].src
-        mac_dst = packet[Ether].dst
-    
-    # Extract IP addresses
-    ip_src = ip_dst = "-"
-    if IP in packet:
-        ip_src = packet[IP].src
-        ip_dst = packet[IP].dst
-    
-    # Determine protocol and ports
-    protocol = "OTHER"
-    src_port = dst_port = "-"
-    flags = "-"
-    
-    if TCP in packet:
-        protocol = "TCP"
-        src_port = packet[TCP].sport
-        dst_port = packet[TCP].dport
-        flags = str(packet[TCP].flags)
-    elif UDP in packet:
-        protocol = "UDP"
-        src_port = packet[UDP].sport
-        dst_port = packet[UDP].dport
-    
-    # Classify protocol more specifically
-    if is_http(packet):
-        protocol = "HTTP"
-    elif UDP in packet and (packet[UDP].sport == 53 or packet[UDP].dport == 53):
-        protocol = "DNS"
-    
-    # Format and log packet info
-    packet_len = len(packet)
-    log_line = (
-        f"[{timestamp}] {protocol:5} "
-        f"MAC {mac_src} -> {mac_dst} | "
-        f"IP {ip_src}:{src_port} -> {ip_dst}:{dst_port} | "
-        f"len={packet_len} flags={flags}"
-    )
-    
-    print(log_line)
-    
-    stats[protocol] = stats.get(protocol, 0) + 1
-    
-    # Analyze payload for security concerns
-    payload = get_payload(packet)
-    if not payload:
-        return
-    
-    # Check for sensitive data
-    sensitive_matches = find_sensitive_data(payload)
-    if sensitive_matches:
-        msg = f"  [!] SENSITIVE: {protocol} packet from {ip_src}:{src_port}"
-        print(msg)
-        for match in sensitive_matches[:3]:
-            detail = f"      - {match}"
-            print(detail)
-    
-    # Check for HTTP metadata leakage
-    if protocol == "HTTP":
-        for line in payload.splitlines()[:20]:
-            header = line.split(":", 1)[0].strip().lower()
-            if header in HTTP_METADATA_HEADERS:
-                msg = f"  [i] HTTP HEADER: {line.strip()}"
-                print(msg)
+    src_mac = dst_mac = "N/A"
+    if Ether in pkt:
+        src_mac = pkt[Ether].src
+        dst_mac = pkt[Ether].dst
 
+    src_ip = dst_ip = "N/A"
+    sport = dport = "N/A"
+    proto = "OTHER"
+    flags = ""
 
-def capture_traffic(bpf_filter, label, stats):
-    print(f"\n=== Capturing {label} ({bpf_filter}) ===")
-    
-    sniff(
-        iface=INTERFACE,
-        filter=bpf_filter,
-        count=PACKETS_PER_CAPTURE,
-        store=False,
-        prn=lambda pkt: process_packet(pkt, stats),
-    )
+    if IP in pkt:
+        src_ip = pkt[IP].src
+        dst_ip = pkt[IP].dst
 
-def write_report(stats):
-    total = sum(stats.values())
-    
-    report_lines = [
-        "=" * 70,
-        "PACKET CAPTURE REPORT",
-        "=" * 70,
-        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "",
-        "SUMMARY",
-        "-" * 70,
-    ]
-    
-    for protocol in sorted(stats.keys()):
-        count = stats[protocol]
-        percentage = (count / total * 100) if total > 0 else 0
-        report_lines.append(f"  {protocol:6} : {count:4} packets ({percentage:5.1f}%)")
-    
-    report_lines.extend([
-        "-" * 70,
-        f"  {'TOTAL':6} : {total:4} packets",
-        "",
-        "FILES GENERATED",
-        "-" * 70,
-        f"  - {REPORT_FILE}: This report",
-        "=" * 70,
-    ])
-    
-    report_text = "\n".join(report_lines)
-    print("\n" + report_text)
-    
-    with open(REPORT_FILE, "w") as f:
-        f.write(report_text)
-    
-    print(f"\n[+] Report saved to: {REPORT_FILE}")
-    print(f"[+] Log saved to: {LOG_FILE}")
+    if TCP in pkt:
+        proto = "TCP"
+        sport = str(pkt[TCP].sport)
+        dport = str(pkt[TCP].dport)
+        flags = str(pkt[TCP].flags)
+        tcp_count += 1
+    elif UDP in pkt:
+        proto = "UDP"
+        sport = str(pkt[UDP].sport)
+        dport = str(pkt[UDP].dport)
+        udp_count += 1
 
+    line = f"[{current_label}] time={ts:.6f} {src_ip}:{sport} -> {dst_ip}:{dport} {proto} len={length} mac={src_mac}->{dst_mac}"
+    if flags:
+        line += f" flags={flags}"
+    print(line)
 
-def main():
-    # Clean up old files
-    if os.path.exists(REPORT_FILE):
-        os.remove(REPORT_FILE)
-    
-    stats = {}
-    
-    try:
-        # Capture traffic for each filter
-        for bpf_filter, label in CAPTURES:
-            capture_traffic(bpf_filter, label, stats)
-        
-        # Generate report
-        write_report(stats)
-        
-    except PermissionError:
-        print("[!] ERROR: Run with sudo to capture packets")
-        return
-    except Exception as e:
-        print(f"[!] ERROR: {e}")
-        return
+    if Raw in pkt:
+        payload = safe_decode(bytes(pkt[Raw].load))
+        low = payload.lower()
+
+        for kw in SENSITIVE_KEYWORDS:
+            if kw in low:
+                snippet = payload.replace("\r", " ").replace("\n", " ").strip()[:120]
+                print(f"  [{current_label}] POSSIBLE SENSITIVE DATA: matched '{kw}' | payload='{snippet}'")
+                break
+
+        for marker in HTTP_METADATA_MARKERS:
+            if marker in low:
+                print(f"  [{current_label}] HTTP METADATA EXPOSURE: found '{marker.strip()}' header")
+                break
+
+def main() -> None:
+    global current_label
+
+    current_label = "TCP_ONLY"
+    sniff(filter="tcp", count=COUNT, prn=packet_callback)
+
+    current_label = "HTTP_80"
+    sniff(filter="tcp port 80", count=COUNT, prn=packet_callback)
+
+    current_label = "DNS_53"
+    sniff(filter="udp port 53", count=COUNT, prn=packet_callback)
+
+    print(f"Total TCP Packets: {tcp_count}")
+    print(f"Total UDP Packets: {udp_count}")
 
 if __name__ == "__main__":
     main()
+

@@ -54,7 +54,7 @@ def main():
         q = times_by_ip[src_ip]
         q.append(t)
 
-        # implement sliding window: remove timestamps older than WINDOW_SECONDS
+        # remove timestamps older than WINDOW_SECONDS
         # calculate the cutoff time (5 seconds before current time)
         cutoff = t - WINDOW_SECONDS
         # popleft() will remove from the front of the deque (oldest timestamps)
@@ -77,3 +77,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
