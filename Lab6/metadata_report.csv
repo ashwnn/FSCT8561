@@ -1,0 +1,7 @@
+file,GPSLatitude,GPSLongitude,DateTimeOriginal,CreateDate,ModifyDate,Make,Model,Software,UserComment,ImageDescription,FS_Modified,Timestamp_Anomaly,Editing_Software,Double_JPEG,Secret_Field,Secret_Mode,Secret_Text,Risk_Score
+Activation.png,40.712800,-74.006000,2025:02:02 10:15:00,2025:02:02 10:15:00,2025:02:02 10:15:00,Nikon,D750,Adobe Lightroom 13.0,,,2025-02-02 10:15:00,NO,YES,NO,,,,10
+Brain-Channel.png,,,,,,,,,,LATERAL: Pivot to internal Domain Controller using Mimikatz.,2026-02-22 22:45:37,NO,NO,NO,,,,0
+Brain.png,,,,,,,,RECON: Perform DNS harvesting and Subdomain enumeration.,,,2025-02-01 14:22:10,NO,NO,NO,,,,0
+Chemicals.png,,,,,,,,,,,2026-02-22 23:15:50,NO,NO,NO,,,,0
+Dopamine.png,,,,,,,,,,,2026-02-22 22:44:05,NO,NO,NO,,,,0
+Music.png,,,2025:02:06 11:11:00,2025:02:06 11:11:00,2025:02:06 11:11:00,Olympus,OM-D E-M10,,,,2025-02-06 11:11:00,NO,NO,NO,Copyright,decoded,EXFIL: Tunnel compressed database dump via DNS Covert Channel.,10
