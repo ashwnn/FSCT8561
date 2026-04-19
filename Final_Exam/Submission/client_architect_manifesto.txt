@@ -1,0 +1,3 @@
+The Message: > "The vault is not locked by a key, but by a consensus. 
+To find the next step, look into the block where the first hash meets the last protocol. 
+Remember: Privacy is not the ability to hide, but the right to choose what you reveal. The Architect" 
